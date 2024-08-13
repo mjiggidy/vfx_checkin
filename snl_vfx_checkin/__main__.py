@@ -1,11 +1,12 @@
-import sys, pathlib, io, itertools
+import sys, pathlib, io, re
 from pprint import pprint
 from pymediainfo import MediaInfo, Track
 from timecode import Timecode, TimecodeRange
+from . import parse_memo
 
-def write_ale(ale_data:list[dict], file_stream:io.TextIOBase):
+PAT_ALE_CHARACTERS_REJECT = re.compile(r"[\r\n\t]+")
 
-	ale_header = """Heading
+ALE_HEADER = """Heading
 FIELD_DELIM	TABS
 VIDEO_FORMAT	1080
 FILM_FORMAT	35mm, 4 perf
@@ -13,7 +14,11 @@ AUDIO_FORMAT	48khz
 FPS	24
 """
 
-	print(ale_header, file=file_stream)
+def write_ale(ale_data:list[dict], file_stream:io.TextIOBase):
+
+
+
+	print(ALE_HEADER, file=file_stream)
 
 	cols = []
 	for shot in ale_data:
@@ -25,7 +30,9 @@ FPS	24
 
 	print("Data", file=file_stream)
 	for shot in ale_data:
-		print("\t".join(str(shot.get(c,"")) for c in ale_columns), file=file_stream, end="\t\n")
+		print("\t".join(
+			PAT_ALE_CHARACTERS_REJECT.sub("  ",str(shot.get(c,""))) for c in ale_columns
+		), file=file_stream, end="\t\n")
 
 
 
@@ -54,6 +61,26 @@ def get_timecode_range(mediainfo:MediaInfo) -> TimecodeRange:
 for pkg in {pathlib.Path(x) for x in sys.argv[1:] if pathlib.Path(x).is_dir()}:
 
 	ale_data = []
+	submission_notes = dict()
+
+	for notes in pkg.glob("*.xls*"):
+		if notes.name.startswith("."):
+			print(f"Skipping {notes.name}")
+			continue
+
+		try:
+			print(f"Reading notes from {notes.name}...")
+			package_notes = parse_memo.parse_notes_from_memo(notes)
+		except Exception as e:
+			print(f"Skipping {notes.name}: {e}")
+		
+		for comp, comp_note in package_notes.items():
+			if comp in submission_notes:
+				print(f"{comp} already noted...")
+				continue
+			submission_notes[comp] = comp_note
+
+
 	for comp in pkg.glob("*.mov"):
 		
 		if comp.name.startswith("."):
@@ -76,8 +103,11 @@ for pkg in {pathlib.Path(x) for x in sys.argv[1:] if pathlib.Path(x).is_dir()}:
 			"VFX Version": vfx_version,
 			"Frame Count Start": tc_range.start.frame_number,
 			"VFX": "FRM-" + str(tc_range.start.frame_number).zfill(9),
-			"VFX Package": pathlib.Path(comp).parent.name
+			"VFX Package": pathlib.Path(comp).parent.name,
+			"VFX Submission Notes": submission_notes.get(pathlib.Path(comp).stem, "")
 		})
+
+		print(ale_data)
 
 	output_path = pathlib.Path(pkg, pkg.name+".ale")
 
